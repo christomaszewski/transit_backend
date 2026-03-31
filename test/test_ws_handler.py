@@ -228,6 +228,119 @@ class TestDeviationConfig:
         assert dc.show_map_visualization is False
 
 
+class TestFileIOCommands:
+    def test_save_path_basic(self, populated_cmd_handler):
+        result = populated_cmd_handler.handle({"type": "save_path", "filename": "test_save"})
+        assert result["type"] == "path_saved"
+        assert result["filename"] == "test_save.json"
+
+    def test_save_path_with_json_extension(self, populated_cmd_handler):
+        result = populated_cmd_handler.handle({"type": "save_path", "filename": "test.json"})
+        assert result["filename"] == "test.json"
+
+    def test_save_path_returns_data(self, populated_cmd_handler):
+        result = populated_cmd_handler.handle({"type": "save_path", "filename": "data_test"})
+        data = result["download_data"]
+        assert data["version"] == 1
+        assert data["tool"] == "TRANSIT"
+        assert "path" in data
+        assert "environment" in data
+
+    def test_save_preserves_waypoints(self, populated_cmd_handler):
+        result = populated_cmd_handler.handle({"type": "save_path", "filename": "wp_test"})
+        waypoints = result["download_data"]["path"]["waypoints"]
+        assert len(waypoints) == 3
+
+    def test_save_preserves_environment(self, populated_cmd_handler):
+        result = populated_cmd_handler.handle({"type": "save_path", "filename": "env_test"})
+        env = result["download_data"]["environment"]
+        assert len(env["obstacles"]) == 1
+        assert len(env["keepout_zones"]) == 1
+
+    def test_load_path_restores_state(self, populated_cmd_handler):
+        populated_cmd_handler.handle({"type": "save_path", "filename": "load_test"})
+        # Clear state
+        populated_cmd_handler.state.path.waypoints.clear()
+        populated_cmd_handler.state.environment.obstacles.clear()
+        assert len(populated_cmd_handler.state.path.waypoints) == 0
+        # Load
+        result = populated_cmd_handler.handle({"type": "load_path", "filename": "load_test.json"})
+        assert result["type"] == "path_loaded"
+        assert len(populated_cmd_handler.state.path.waypoints) == 3
+        assert len(populated_cmd_handler.state.environment.obstacles) == 1
+
+    def test_load_path_pushes_undo(self, populated_cmd_handler):
+        populated_cmd_handler.handle({"type": "save_path", "filename": "undo_test"})
+        populated_cmd_handler.handle({"type": "load_path", "filename": "undo_test.json"})
+        assert populated_cmd_handler.undo.can_undo
+
+    def test_load_path_calls_on_state_changed(self, populated_cmd_handler):
+        populated_cmd_handler.handle({"type": "save_path", "filename": "cb_test"})
+        called = []
+        populated_cmd_handler.on_state_changed = lambda: called.append(True)
+        populated_cmd_handler.handle({"type": "load_path", "filename": "cb_test.json"})
+        assert len(called) == 1
+
+    def test_load_path_missing_file(self, cmd_handler):
+        with pytest.raises(FileNotFoundError):
+            cmd_handler.handle({"type": "load_path", "filename": "nonexistent.json"})
+
+    def test_upload_path_basic(self, cmd_handler):
+        data = {
+            "path": {"path_id": "uploaded", "waypoints": [{"lat": 33.0, "lon": -84.0}]},
+            "environment": {"obstacles": [], "keepout_zones": []},
+        }
+        result = cmd_handler.handle({"type": "upload_path", "data": data})
+        assert result["type"] == "path_loaded"
+        assert len(cmd_handler.state.path.waypoints) == 1
+        assert cmd_handler.state.path.waypoints[0].lat == 33.0
+
+    def test_upload_path_pushes_undo(self, cmd_handler):
+        data = {"path": {"waypoints": []}, "environment": {}}
+        cmd_handler.handle({"type": "upload_path", "data": data})
+        assert cmd_handler.undo.can_undo
+
+    def test_upload_path_calls_on_state_changed(self, cmd_handler):
+        called = []
+        cmd_handler.on_state_changed = lambda: called.append(True)
+        data = {"path": {"waypoints": []}, "environment": {}}
+        cmd_handler.handle({"type": "upload_path", "data": data})
+        assert len(called) == 1
+
+    def test_upload_with_obstacles(self, cmd_handler):
+        data = {
+            "path": {"waypoints": []},
+            "environment": {
+                "obstacles": [{"id": "obs_1", "lat": 33.0, "lon": -84.0, "radius": 100.0}],
+                "keepout_zones": [],
+            },
+        }
+        cmd_handler.handle({"type": "upload_path", "data": data})
+        assert len(cmd_handler.state.environment.obstacles) == 1
+        assert cmd_handler.state.environment.obstacles[0].id == "obs_1"
+
+    def test_list_saved_paths_empty(self, cmd_handler):
+        result = cmd_handler.handle({"type": "list_saved_paths"})
+        assert result["type"] == "saved_paths_list"
+        assert result["files"] == []
+
+    def test_list_saved_paths_with_files(self, populated_cmd_handler):
+        populated_cmd_handler.handle({"type": "save_path", "filename": "file_a"})
+        populated_cmd_handler.handle({"type": "save_path", "filename": "file_b"})
+        result = populated_cmd_handler.handle({"type": "list_saved_paths"})
+        filenames = [f["filename"] for f in result["files"]]
+        assert "file_a.json" in filenames
+        assert "file_b.json" in filenames
+
+    def test_save_load_round_trip_fidelity(self, populated_cmd_handler):
+        """Save, mutate, load — verify original state is restored."""
+        original_lat = populated_cmd_handler.state.path.waypoints[0].lat
+        populated_cmd_handler.handle({"type": "save_path", "filename": "fidelity"})
+        populated_cmd_handler.state.path.waypoints[0].lat = 99.0
+        populated_cmd_handler.handle({"type": "load_path", "filename": "fidelity.json"})
+        assert populated_cmd_handler.state.path.waypoints[0].lat == pytest.approx(original_lat)
+
+
 class TestUnknownCommand:
     def test_unknown_type_returns_none(self, cmd_handler):
         result = cmd_handler.handle({"type": "nonexistent_command"})
