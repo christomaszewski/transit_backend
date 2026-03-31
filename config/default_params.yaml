@@ -1,0 +1,16 @@
+transit_node:
+  ros__parameters:
+    ws_port: 8765
+    http_port: 8080
+    save_dir: "/data/paths"
+    cesium_ion_token: ""
+    tile_provider: "ion"
+    local_tile_url: ""
+    path_topic: "/transit/planned_path"
+    path_rate_hz: 1.0
+    path_enabled: true
+    nav_path_enabled: false
+    nav_path_topic: "/transit/nav_path"
+    env_topic: "/transit/environment"
+    env_enabled: true
+    frontend_dir: "/ws/src/transit_frontend"
